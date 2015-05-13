@@ -4,8 +4,11 @@ var favicon = require('serve-favicon');
 var logger = require('morgan');
 var cookieParser = require('cookie-parser');
 var bodyParser = require('body-parser');
-
 var mongoose = require('mongoose');
+var passport = require('passport');
+var session = require('express-session');
+var LocalStrategy = require('passport-local');
+
 mongoose.connect('mongodb://localhost/competeFit');
 var db = mongoose.connection;
 
@@ -38,21 +41,62 @@ var router = express.Router();
 
 var app = express();
 
-// view engine setup
-app.set('views', path.join(__dirname, 'views'));
-app.set('view engine', 'jade');
+passport.use(new LocalStrategy({usernameField: 'email'}, function(username, password, done) {
+  User.findOne({email: username}).exec(function(err, user) {
+    if (err) { return done(err); }
+    
+    if (!user) { 
+      return done(null, false, { message: 'Unknown user ' + username }); 
+    }
+    
+    if (user.password != password) {
+      return done(null, false, { message: 'Invalid password' }); 
+    }
+    
+    return done(null, user);
+  });
+}));
 
-// uncomment after placing your favicon in /public
-//app.use(favicon(__dirname + '/public/favicon.ico'));
+passport.serializeUser(function(user, done) {
+  done(null, user._id);
+});
+
+passport.deserializeUser(function(id, done) {
+  User.findById(id, function (err, user) {
+    done(err, user);
+  });
+});
+
+app.use(session({ 
+  secret: 'herpderpdurrhurr',
+  resave: true,
+  saveUninitialized: true
+}));
+app.use(passport.initialize());
+app.use(passport.session());
+
+// route middleware to make sure a user is logged in
+function isLoggedIn(req, res, next) {
+    if (req.user) {
+        next();
+    } else {
+      res.status(403).send({message: 'Try logging in', error: true});
+    }
+}
+
 app.use(logger('dev'));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
-
+app.post('/authenticate', passport.authenticate('local'), function(req, res) {
+    res.json({status: 'success'});
+});
+  
+  
 // Actual routes
-router.get('/users', function(req, res, next) {
+router.get('/users', isLoggedIn, function(req, res, next) {
   User.find(function (error, records) {
       res.json(records);
   });
@@ -118,7 +162,7 @@ app.use(function(req, res, next) {
 if (app.get('env') === 'development') {
     app.use(function(err, req, res, next) {
         res.status(err.status || 500);
-        res.render('error', {
+        res.json({
             message: err.message,
             error: err
         });
@@ -129,7 +173,7 @@ if (app.get('env') === 'development') {
 // no stacktraces leaked to user
 app.use(function(err, req, res, next) {
     res.status(err.status || 500);
-    res.render('error', {
+    res.json({
         message: err.message,
         error: {}
     });
